@@ -8,15 +8,14 @@ local TweenService = game:GetService("TweenService")
 
 -- Configs
 local aimbotBind = Enum.KeyCode.F
-local aimbotActive = false
 local currentTarget = nil
 local aimbotFOV = 60
 local maxDistance = 300
 local showFOV = false
 local espEnabled = false
 local waitingForBind = false
-local boxes = {}
 local guiOpen = true
+local boxes = {}
 
 local aimPartOptions = {"Head", "Torso"}
 local aimPartSelected = "Head"
@@ -32,7 +31,7 @@ if FOVCircle then
 	FOVCircle.Color = Color3.fromRGB(255, 255, 0)
 end
 
--- GUI Setup
+-- GUI
 local gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
 gui.Name = "EvoMenu_GUI"
 gui.ResetOnSpawn = false
@@ -66,8 +65,6 @@ title.Text = "EvoMenu"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 26
-title.TextXAlignment = Enum.TextXAlignment.Center
-title.TextYAlignment = Enum.TextYAlignment.Center
 
 local function createButton(name, posY, text)
 	local btn = Instance.new("TextButton", frame)
@@ -79,7 +76,6 @@ local function createButton(name, posY, text)
 	btn.Font = Enum.Font.Gotham
 	btn.TextSize = 18
 	btn.Text = text
-	btn.AutoButtonColor = true
 
 	local corner = Instance.new("UICorner", btn)
 	corner.CornerRadius = UDim.new(0, 6)
@@ -106,7 +102,7 @@ local function createLabel(name, posY, text)
 end
 
 local espBtn = createButton("ESPButton", 50, "ESP: OFF")
-local bindLbl = createLabel("BindLabel", 90, "Aimbot Bind: LeftShift")
+local bindLbl = createLabel("BindLabel", 90, "Aimbot Bind: F")
 local bindBtn = createButton("BindChangeBtn", 115, "Change Aimbot Bind")
 
 local fovInput = Instance.new("TextBox", frame)
@@ -129,14 +125,94 @@ local aimPartBtn = createButton("AimPartBtn", 315, "Change Aim Part")
 local function updateBindLabel()
 	bindLbl.Text = "Aimbot Bind: " .. (aimbotBind.Name or tostring(aimbotBind))
 end
+
 updateBindLabel()
 
+-- Aimbot logic
+local function isTargetValid(p)
+	if not p.Character then return false end
+	local head = p.Character:FindFirstChild("Head")
+	local humanoid = p.Character:FindFirstChild("Humanoid")
+	if not head or not humanoid then return false end
+	if humanoid.Health <= 0 then return false end
+	if p.Team == LocalPlayer.Team then return false end
+
+	local camPos = Camera.CFrame.Position
+	local dir = (head.Position - camPos).Unit
+	local angle = math.deg(math.acos(Camera.CFrame.LookVector:Dot(dir)))
+	local dist = (head.Position - camPos).Magnitude
+
+	return angle <= aimbotFOV and dist <= maxDistance
+end
+
+local function getClosestPlayer()
+	local camPos = Camera.CFrame.Position
+	local mousePos = UIS:GetMouseLocation()
+	local viewportSize = Camera.ViewportSize
+	local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+
+	local closest, smallestDist = nil, math.huge
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and isTargetValid(p) then
+			local aimPart = aimPartSelected == "Head" and p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
+			if aimPart then
+				local screenPos, onScreen = Camera:WorldToViewportPoint(aimPart.Position)
+				if onScreen then
+					local distFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+					if distFromCenter <= aimbotFOV * 2 and distFromCenter < smallestDist then
+						closest = p
+						smallestDist = distFromCenter
+					end
+				end
+			end
+		end
+	end
+	return closest
+end
+
+local function getAimPosition(character)
+	if aimPartSelected == "Head" then
+		return character:FindFirstChild("Head") and character.Head.Position
+	elseif aimPartSelected == "Torso" then
+		return character:FindFirstChild("HumanoidRootPart") and character.HumanoidRootPart.Position
+	end
+end
+
+-- Aimbot run while key is held
+RunService.RenderStepped:Connect(function()
+	if UIS:IsKeyDown(aimbotBind) then
+		if not currentTarget or not isTargetValid(currentTarget) then
+			currentTarget = getClosestPlayer()
+		end
+		if currentTarget and isTargetValid(currentTarget) then
+			local aimPos = getAimPosition(currentTarget.Character)
+			if aimPos then
+				Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPos)
+			end
+		else
+			currentTarget = nil
+		end
+	end
+end)
+
+-- FOV Circle
+RunService.RenderStepped:Connect(function()
+	if FOVCircle and showFOV then
+		local mousePos = UIS:GetMouseLocation()
+		FOVCircle.Position = Vector2.new(mousePos.X, mousePos.Y)
+		FOVCircle.Radius = math.clamp(aimbotFOV * 2, 30, 500)
+		FOVCircle.Visible = true
+	elseif FOVCircle then
+		FOVCircle.Visible = false
+	end
+end)
+
+-- GUI interaction
 fovInput.FocusLost:Connect(function(enter)
 	if enter then
-		local text = fovInput.Text:gsub("[^%d]", "")
-		local num = tonumber(text)
+		local num = tonumber(fovInput.Text:match("%d+"))
 		if num and num >= 5 and num <= 180 then
-			aimbotFOV = math.floor(num)
+			aimbotFOV = num
 		end
 		fovInput.Text = "Aimbot FOV: " .. aimbotFOV
 	end
@@ -174,48 +250,6 @@ aimPartBtn.MouseButton1Click:Connect(function()
 	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
 end)
 
-local function isTargetValid(p)
-	if not p.Character then return false end
-	local head = p.Character:FindFirstChild("Head")
-	local humanoid = p.Character:FindFirstChild("Humanoid")
-	if not head or not humanoid then return false end
-	if humanoid.Health <= 0 then return false end
-	if p.Team == LocalPlayer.Team then return false end
-
-	local camPos = Camera.CFrame.Position
-	local dir = (head.Position - camPos).Unit
-	local angle = math.deg(math.acos(Camera.CFrame.LookVector:Dot(dir)))
-	local dist = (head.Position - camPos).Magnitude
-
-	return angle <= aimbotFOV and dist <= maxDistance
-end
-
-local function getClosestPlayer()
-	local camPos = Camera.CFrame.Position
-	local lookVec = Camera.CFrame.LookVector
-	local closest, smallestAngle = nil, math.huge
-	for _, p in pairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and isTargetValid(p) then
-			local dir = (p.Character.Head.Position - camPos).Unit
-			local angle = math.deg(math.acos(lookVec:Dot(dir)))
-			if angle < smallestAngle then
-				closest = p
-				smallestAngle = angle
-			end
-		end
-	end
-	return closest
-end
-
-local function getAimPosition(character)
-	if aimPartSelected == "Head" then
-		return character:FindFirstChild("Head") and character.Head.Position
-	elseif aimPartSelected == "Torso" then
-		return character:FindFirstChild("HumanoidRootPart") and character.HumanoidRootPart.Position
-	end
-	return nil
-end
-
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 
@@ -231,37 +265,9 @@ UIS.InputBegan:Connect(function(input, gpe)
 		guiOpen = not guiOpen
 		gui.Enabled = guiOpen
 	end
-
-	if input.KeyCode == aimbotBind then
-		aimbotActive = true
-		if not currentTarget or not isTargetValid(currentTarget) then
-			currentTarget = getClosestPlayer()
-		end
-		coroutine.wrap(function()
-			while aimbotActive do
-				if currentTarget and isTargetValid(currentTarget) then
-					local aimPos = getAimPosition(currentTarget.Character)
-					if aimPos then
-						Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPos)
-					end
-				else
-					currentTarget = nil
-				end
-				RunService.RenderStepped:Wait()
-			end
-		end)()
-	end
 end)
 
-UIS.InputEnded:Connect(function(input)
-	if input.KeyCode == aimbotBind then
-		aimbotActive = false
-		currentTarget = nil
-	end
-end)
-
--- ESP functions
-
+-- ESP
 local function createBoxForPlayer(p)
 	if boxes[p] then return end
 	local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
@@ -272,20 +278,9 @@ local function createBoxForPlayer(p)
 	box.AlwaysOnTop = true
 	box.ZIndex = 10
 	box.Transparency = 0.25
+	box.Color3 = Color3.fromRGB(255, 0, 0)
 	box.Parent = game.CoreGui
 	boxes[p] = box
-	return box
-end
-
-local function updateBoxColor(p)
-	if boxes[p] then
-		-- Corrigido para mostrar vermelho para inimigos, verde para aliados
-		if p.Team == LocalPlayer.Team then
-			boxes[p].Color3 = Color3.fromRGB(0, 255, 0) -- Verde para aliados
-		else
-			boxes[p].Color3 = Color3.fromRGB(255, 0, 0) -- Vermelho para inimigos
-		end
-	end
 end
 
 local function removeBox(p)
@@ -303,10 +298,8 @@ local function espToggle(state)
 	end
 
 	for _, p in pairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer then
-			-- Criar box para todos exceto local player
+		if p ~= LocalPlayer and p.Team ~= LocalPlayer.Team then
 			createBoxForPlayer(p)
-			updateBoxColor(p)
 		end
 	end
 end
@@ -319,25 +312,10 @@ end)
 Players.PlayerAdded:Connect(function(p)
 	p.CharacterAdded:Connect(function()
 		task.wait(0.5)
-		if espEnabled then
+		if espEnabled and p.Team ~= LocalPlayer.Team then
 			createBoxForPlayer(p)
-			updateBoxColor(p)
 		end
-	end)
-	p:GetPropertyChangedSignal("Team"):Connect(function()
-		updateBoxColor(p)
 	end)
 end)
 
 Players.PlayerRemoving:Connect(removeBox)
-
-RunService.RenderStepped:Connect(function()
-	if FOVCircle and showFOV then
-		local mousePos = UIS:GetMouseLocation()
-		FOVCircle.Position = Vector2.new(mousePos.X, mousePos.Y)
-		FOVCircle.Radius = math.clamp(aimbotFOV * 2, 30, 500)
-		FOVCircle.Visible = true
-	elseif FOVCircle then
-		FOVCircle.Visible = false
-	end
-end)
