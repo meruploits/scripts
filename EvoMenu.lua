@@ -5,6 +5,7 @@ local Camera = workspace.CurrentCamera
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 -- Configs
 local aimbotBind = Enum.KeyCode.F
@@ -120,6 +121,32 @@ local function updateBindLabel()
 end
 updateBindLabel()
 
+-- Helper: verifica se tem linha de visão entre o jogador local e o alvo
+local function hasLineOfSight(targetPart)
+	if not targetPart then return false end
+	local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not localRoot then return false end
+
+	local origin = localRoot.Position
+	local direction = (targetPart.Position - origin).Unit * maxDistance
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+	raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+	local raycastResult = Workspace:Raycast(origin, direction, raycastParams)
+	if raycastResult then
+		local hitPart = raycastResult.Instance
+		if hitPart:IsDescendantOf(targetPart.Parent) then
+			return true
+		else
+			return false
+		end
+	else
+		return true
+	end
+end
+
 -- Aimbot Helpers
 local function isTargetValid(p)
 	if not p.Character then return false end
@@ -143,7 +170,11 @@ local function isTargetValid(p)
 	local angle = math.deg(math.acos(Camera.CFrame.LookVector:Dot(dir)))
 	local dist = (head.Position - camPos).Magnitude
 
-	return angle <= aimbotFOV and dist <= maxDistance
+	if angle > aimbotFOV or dist > maxDistance then
+		return false
+	end
+
+	return true
 end
 
 local function getAimPart(p)
@@ -161,17 +192,36 @@ end
 
 local function getClosestToMouse()
 	local mouse = UIS:GetMouseLocation()
-	local closest, smallestDist = nil, math.huge
+	local visibleTargets = {}
+	local invisibleTargets = {}
+
 	for _, p in pairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer and isTargetValid(p) then
-			local dist = getScreenDistToMouse(p)
-			if dist <= aimbotFOV * 2 and dist < smallestDist then
-				smallestDist = dist
-				closest = p
+			local aimPart = getAimPart(p)
+			if aimPart then
+				if hasLineOfSight(aimPart) then
+					table.insert(visibleTargets, p)
+				else
+					table.insert(invisibleTargets, p)
+				end
 			end
 		end
 	end
-	return closest, smallestDist
+
+	local function sortByScreenDist(a, b)
+		return getScreenDistToMouse(a) < getScreenDistToMouse(b)
+	end
+
+	table.sort(visibleTargets, sortByScreenDist)
+	table.sort(invisibleTargets, sortByScreenDist)
+
+	if #visibleTargets > 0 then
+		return visibleTargets[1]
+	elseif #invisibleTargets > 0 then
+		return invisibleTargets[1]
+	else
+		return nil
+	end
 end
 
 local function getAimPosition(character)
@@ -179,7 +229,7 @@ local function getAimPosition(character)
 	return part and part.Position or nil
 end
 
--- Input to prevent mouse while aiming
+-- Input para bloquear movimento do mouse enquanto aimbot ativo
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.UserInputType == Enum.UserInputType.MouseMovement and blockMouseMovement then
@@ -192,16 +242,14 @@ RunService.RenderStepped:Connect(function()
 	if UIS:IsKeyDown(aimbotBind) then
 		blockMouseMovement = true
 
-		-- verifica se o alvo atual ainda é válido e está dentro do FOV com margem pequena
 		local currentTargetValid = currentTarget and isTargetValid(currentTarget)
 		local currentTargetDist = currentTargetValid and getScreenDistToMouse(currentTarget) or math.huge
-		local margin = 15 -- margem em pixels para considerar trocar o alvo
+		local margin = 15 -- margem para troca de alvo em pixels
 
 		if not currentTargetValid or currentTargetDist > aimbotFOV * 2 or currentTargetDist > margin then
-			-- troca alvo só se o atual for inválido ou estiver longe do centro do mouse
-			local newTarget, newDist = getClosestToMouse()
+			local newTarget = getClosestToMouse()
 			if newTarget then
-				-- troca só se o novo estiver mais perto que o atual por uma margem razoável
+				local newDist = getScreenDistToMouse(newTarget)
 				if newDist + margin < currentTargetDist then
 					currentTarget = newTarget
 				end
@@ -325,20 +373,6 @@ RunService.Heartbeat:Connect(function()
 	updateESPPlayers()
 end)
 
--- GUI Button Events
-bindBtn.MouseButton1Click:Connect(function()
-	if waitingForBind then return end
-	waitingForBind = true
-	bindBtn.Text = "Press any key..."
-end)
-
-aimPartBtn.MouseButton1Click:Connect(function()
-	local currentIndex = table.find(aimPartOptions, aimPartSelected)
-	currentIndex = (currentIndex % #aimPartOptions) + 1
-	aimPartSelected = aimPartOptions[currentIndex]
-	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
-end)
-
 fovInput.FocusLost:Connect(function(enter)
 	if enter then
 		local num = tonumber(fovInput.Text:match("%d+"))
@@ -366,6 +400,19 @@ end)
 toggleFOVCircle.MouseButton1Click:Connect(function()
 	showFOV = not showFOV
 	toggleFOVCircle.Text = "Show FOV Circle: " .. (showFOV and "ON" or "OFF")
+end)
+
+bindBtn.MouseButton1Click:Connect(function()
+	if waitingForBind then return end
+	waitingForBind = true
+	bindBtn.Text = "Press any key..."
+end)
+
+aimPartBtn.MouseButton1Click:Connect(function()
+	local currentIndex = table.find(aimPartOptions, aimPartSelected)
+	currentIndex = (currentIndex % #aimPartOptions) + 1
+	aimPartSelected = aimPartOptions[currentIndex]
+	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
 end)
 
 UIS.InputBegan:Connect(function(input, gpe)
