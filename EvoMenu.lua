@@ -12,7 +12,7 @@ local aimbotActive = false
 local currentTarget = nil
 local aimbotFOV = 60
 local maxDistance = 300
-local showFOV = false -- começa desativado
+local showFOV = false
 local espEnabled = false
 local waitingForBind = false
 local boxes = {}
@@ -39,7 +39,7 @@ gui.ResetOnSpawn = false
 gui.Enabled = true
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 300, 0, 320) -- aumentei altura e largura
+frame.Size = UDim2.new(0, 340, 0, 360) -- aumentei altura e largura
 frame.Position = UDim2.new(0.5, -150, 1, 0) -- começa fora da tela pra animar
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 frame.BorderColor3 = Color3.fromRGB(70, 70, 70)
