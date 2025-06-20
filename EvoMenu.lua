@@ -39,15 +39,14 @@ gui.ResetOnSpawn = false
 gui.Enabled = true
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 340, 0, 360) -- aumentei altura e largura
-frame.Position = UDim2.new(0.5, -150, 1, 0) -- começa fora da tela pra animar
+frame.Size = UDim2.new(0, 340, 0, 360)
+frame.Position = UDim2.new(0.5, -150, 1, 0)
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 frame.BorderColor3 = Color3.fromRGB(70, 70, 70)
 frame.BorderSizePixel = 2
 frame.Active = true
 frame.Draggable = true
 
--- Adiciona cantos arredondados
 local frameCorner = Instance.new("UICorner", frame)
 frameCorner.CornerRadius = UDim.new(0, 8)
 local frameStroke = Instance.new("UIStroke", frame)
@@ -55,7 +54,6 @@ frameStroke.Thickness = 2
 frameStroke.Color = Color3.fromRGB(70, 70, 70)
 frameStroke.Transparency = 0.3
 
--- Animação entrada
 TweenService:Create(frame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 	Position = UDim2.new(0.5, -150, 0.5, -160)
 }):Play()
@@ -71,7 +69,6 @@ title.TextSize = 26
 title.TextXAlignment = Enum.TextXAlignment.Center
 title.TextYAlignment = Enum.TextYAlignment.Center
 
--- Helper functions to create UI elements
 local function createButton(name, posY, text)
 	local btn = Instance.new("TextButton", frame)
 	btn.Name = name
@@ -129,13 +126,11 @@ local toggleFOVCircle = createButton("ToggleFOV", 255, "Show FOV Circle: OFF")
 local aimPartLabel = createLabel("AimPartLabel", 290, "Aim Part: Head")
 local aimPartBtn = createButton("AimPartBtn", 315, "Change Aim Part")
 
--- Atualiza bind label
 local function updateBindLabel()
 	bindLbl.Text = "Aimbot Bind: " .. (aimbotBind.Name or tostring(aimbotBind))
 end
 updateBindLabel()
 
--- Eventos fovInput
 fovInput.FocusLost:Connect(function(enter)
 	if enter then
 		local text = fovInput.Text:gsub("[^%d]", "")
@@ -179,7 +174,6 @@ aimPartBtn.MouseButton1Click:Connect(function()
 	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
 end)
 
--- Validação alvo
 local function isTargetValid(p)
 	if not p.Character then return false end
 	local head = p.Character:FindFirstChild("Head")
@@ -196,7 +190,6 @@ local function isTargetValid(p)
 	return angle <= aimbotFOV and dist <= maxDistance
 end
 
--- Mira
 local function getClosestPlayer()
 	local camPos = Camera.CFrame.Position
 	local lookVec = Camera.CFrame.LookVector
@@ -223,7 +216,6 @@ local function getAimPosition(character)
 	return nil
 end
 
--- Input
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 
@@ -235,7 +227,6 @@ UIS.InputBegan:Connect(function(input, gpe)
 		return
 	end
 
-	-- Aqui corrigi para usar InputBegan e checar KeyCode RightAlt
 	if input.KeyCode == Enum.KeyCode.U then
 		guiOpen = not guiOpen
 		gui.Enabled = guiOpen
@@ -269,7 +260,8 @@ UIS.InputEnded:Connect(function(input)
 	end
 end)
 
--- ESP
+-- ESP functions
+
 local function createBoxForPlayer(p)
 	if boxes[p] then return end
 	local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
@@ -286,8 +278,13 @@ local function createBoxForPlayer(p)
 end
 
 local function updateBoxColor(p)
-	if boxes[p] and p.TeamColor then
-		boxes[p].Color3 = p.TeamColor.Color
+	if boxes[p] then
+		-- Corrigido para mostrar vermelho para inimigos, verde para aliados
+		if p.Team == LocalPlayer.Team then
+			boxes[p].Color3 = Color3.fromRGB(0, 255, 0) -- Verde para aliados
+		else
+			boxes[p].Color3 = Color3.fromRGB(255, 0, 0) -- Vermelho para inimigos
+		end
 	end
 end
 
@@ -306,7 +303,8 @@ local function espToggle(state)
 	end
 
 	for _, p in pairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and p.Team ~= LocalPlayer.Team then
+		if p ~= LocalPlayer then
+			-- Criar box para todos exceto local player
 			createBoxForPlayer(p)
 			updateBoxColor(p)
 		end
@@ -326,14 +324,13 @@ Players.PlayerAdded:Connect(function(p)
 			updateBoxColor(p)
 		end
 	end)
-	p:GetPropertyChangedSignal("TeamColor"):Connect(function()
+	p:GetPropertyChangedSignal("Team"):Connect(function()
 		updateBoxColor(p)
 	end)
 end)
 
 Players.PlayerRemoving:Connect(removeBox)
 
--- FOV Circle
 RunService.RenderStepped:Connect(function()
 	if FOVCircle and showFOV then
 		local mousePos = UIS:GetMouseLocation()
