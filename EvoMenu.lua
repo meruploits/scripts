@@ -15,10 +15,12 @@ local showFOV = false
 local espEnabled = false
 local waitingForBind = false
 local guiOpen = true
-local boxes = {}
+local blockMouseMovement = false
 
 local aimPartOptions = {"Head", "Torso"}
 local aimPartSelected = "Head"
+
+local spawnIgnoreStart = 100 -- distância vertical a partir da qual ignora inimigos abaixo do player
 
 -- Drawing API
 local Drawing = Drawing or getgenv().Drawing or getdrawing or nil
@@ -56,15 +58,6 @@ frameStroke.Transparency = 0.3
 TweenService:Create(frame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 	Position = UDim2.new(0.5, -150, 0.5, -160)
 }):Play()
-
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 40)
-title.Position = UDim2.new(0, 0, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "EvoMenu"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 26
 
 local function createButton(name, posY, text)
 	local btn = Instance.new("TextButton", frame)
@@ -125,10 +118,9 @@ local aimPartBtn = createButton("AimPartBtn", 315, "Change Aim Part")
 local function updateBindLabel()
 	bindLbl.Text = "Aimbot Bind: " .. (aimbotBind.Name or tostring(aimbotBind))
 end
-
 updateBindLabel()
 
--- Aimbot logic
+-- Aimbot Helpers
 local function isTargetValid(p)
 	if not p.Character then return false end
 	local head = p.Character:FindFirstChild("Head")
@@ -136,6 +128,15 @@ local function isTargetValid(p)
 	if not head or not humanoid then return false end
 	if humanoid.Health <= 0 then return false end
 	if p.Team == LocalPlayer.Team then return false end
+
+	local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	local targetRoot = p.Character:FindFirstChild("HumanoidRootPart")
+	if localRoot and targetRoot then
+		local verticalDiff = localRoot.Position.Y - targetRoot.Position.Y
+		if verticalDiff > spawnIgnoreStart then
+			return false -- ignora se estiver mais de 100 studs abaixo do player
+		end
+	end
 
 	local camPos = Camera.CFrame.Position
 	local dir = (head.Position - camPos).Unit
@@ -145,45 +146,70 @@ local function isTargetValid(p)
 	return angle <= aimbotFOV and dist <= maxDistance
 end
 
-local function getClosestPlayer()
-	local camPos = Camera.CFrame.Position
-	local mousePos = UIS:GetMouseLocation()
-	local viewportSize = Camera.ViewportSize
-	local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+local function getAimPart(p)
+	return aimPartSelected == "Head" and p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
+end
 
+local function getScreenDistToMouse(p)
+	local part = getAimPart(p)
+	if not part then return math.huge end
+	local screenPos, visible = Camera:WorldToViewportPoint(part.Position)
+	if not visible then return math.huge end
+	local mouse = UIS:GetMouseLocation()
+	return (Vector2.new(screenPos.X, screenPos.Y) - mouse).Magnitude
+end
+
+local function getClosestToMouse()
+	local mouse = UIS:GetMouseLocation()
 	local closest, smallestDist = nil, math.huge
 	for _, p in pairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer and isTargetValid(p) then
-			local aimPart = aimPartSelected == "Head" and p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
-			if aimPart then
-				local screenPos, onScreen = Camera:WorldToViewportPoint(aimPart.Position)
-				if onScreen then
-					local distFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
-					if distFromCenter <= aimbotFOV * 2 and distFromCenter < smallestDist then
-						closest = p
-						smallestDist = distFromCenter
-					end
-				end
+			local dist = getScreenDistToMouse(p)
+			if dist <= aimbotFOV * 2 and dist < smallestDist then
+				smallestDist = dist
+				closest = p
 			end
 		end
 	end
-	return closest
+	return closest, smallestDist
 end
 
 local function getAimPosition(character)
-	if aimPartSelected == "Head" then
-		return character:FindFirstChild("Head") and character.Head.Position
-	elseif aimPartSelected == "Torso" then
-		return character:FindFirstChild("HumanoidRootPart") and character.HumanoidRootPart.Position
-	end
+	local part = aimPartSelected == "Head" and character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+	return part and part.Position or nil
 end
 
--- Aimbot run while key is held
+-- Input to prevent mouse while aiming
+UIS.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement and blockMouseMovement then
+		input:CaptureController()
+	end
+end)
+
+-- Aimbot core
 RunService.RenderStepped:Connect(function()
 	if UIS:IsKeyDown(aimbotBind) then
-		if not currentTarget or not isTargetValid(currentTarget) then
-			currentTarget = getClosestPlayer()
+		blockMouseMovement = true
+
+		-- verifica se o alvo atual ainda é válido e está dentro do FOV com margem pequena
+		local currentTargetValid = currentTarget and isTargetValid(currentTarget)
+		local currentTargetDist = currentTargetValid and getScreenDistToMouse(currentTarget) or math.huge
+		local margin = 15 -- margem em pixels para considerar trocar o alvo
+
+		if not currentTargetValid or currentTargetDist > aimbotFOV * 2 or currentTargetDist > margin then
+			-- troca alvo só se o atual for inválido ou estiver longe do centro do mouse
+			local newTarget, newDist = getClosestToMouse()
+			if newTarget then
+				-- troca só se o novo estiver mais perto que o atual por uma margem razoável
+				if newDist + margin < currentTargetDist then
+					currentTarget = newTarget
+				end
+			else
+				currentTarget = nil
+			end
 		end
+
 		if currentTarget and isTargetValid(currentTarget) then
 			local aimPos = getAimPosition(currentTarget.Character)
 			if aimPos then
@@ -192,14 +218,17 @@ RunService.RenderStepped:Connect(function()
 		else
 			currentTarget = nil
 		end
+	else
+		blockMouseMovement = false
+		currentTarget = nil
 	end
 end)
 
--- FOV Circle
+-- FOV circle
 RunService.RenderStepped:Connect(function()
 	if FOVCircle and showFOV then
-		local mousePos = UIS:GetMouseLocation()
-		FOVCircle.Position = Vector2.new(mousePos.X, mousePos.Y)
+		local mouse = UIS:GetMouseLocation()
+		FOVCircle.Position = Vector2.new(mouse.X, mouse.Y)
 		FOVCircle.Radius = math.clamp(aimbotFOV * 2, 30, 500)
 		FOVCircle.Visible = true
 	elseif FOVCircle then
@@ -207,7 +236,109 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- GUI interaction
+-- 2D ESP System
+local espBoxes = {}
+
+local function remove2DBox(player)
+	if espBoxes[player] then
+		espBoxes[player]:Remove()
+		espBoxes[player] = nil
+	end
+end
+
+local function create2DBox(player)
+	remove2DBox(player)
+
+	local box = Drawing.new("Square")
+	box.Thickness = 2
+	box.Transparency = 1
+	box.Color = Color3.fromRGB(255, 0, 0)
+	box.Filled = false
+	box.Visible = false
+
+	espBoxes[player] = box
+end
+
+local function updateESPPlayers()
+	for _, p in pairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer then
+			local shouldShow = espEnabled and p.Team ~= LocalPlayer.Team
+			if shouldShow and not espBoxes[p] then
+				create2DBox(p)
+			elseif not shouldShow and espBoxes[p] then
+				remove2DBox(p)
+			end
+		end
+	end
+end
+
+RunService.RenderStepped:Connect(function()
+	if not espEnabled then
+		for _, box in pairs(espBoxes) do
+			box.Visible = false
+		end
+		return
+	end
+
+	for p, box in pairs(espBoxes) do
+		local char = p.Character
+		if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Head") then
+			local hrp = char.HumanoidRootPart
+			local head = char.Head
+			local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+			local headPos, headOnScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+			local footPos, footOnScreen = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+
+			if onScreen and headOnScreen and footOnScreen then
+				local height = math.abs(headPos.Y - footPos.Y)
+				local width = height / 1.5
+				box.Size = Vector2.new(width, height)
+				box.Position = Vector2.new(screenPos.X - width / 2, screenPos.Y - height / 2)
+				box.Visible = true
+			else
+				box.Visible = false
+			end
+		else
+			box.Visible = false
+		end
+	end
+end)
+
+espBtn.MouseButton1Click:Connect(function()
+	espEnabled = not espEnabled
+	espBtn.Text = "ESP: " .. (espEnabled and "ON" or "OFF")
+	updateESPPlayers()
+end)
+
+Players.PlayerAdded:Connect(function(p)
+	p.CharacterAdded:Connect(function()
+		task.wait(0.5)
+		updateESPPlayers()
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+	remove2DBox(p)
+end)
+
+RunService.Heartbeat:Connect(function()
+	updateESPPlayers()
+end)
+
+-- GUI Button Events
+bindBtn.MouseButton1Click:Connect(function()
+	if waitingForBind then return end
+	waitingForBind = true
+	bindBtn.Text = "Press any key..."
+end)
+
+aimPartBtn.MouseButton1Click:Connect(function()
+	local currentIndex = table.find(aimPartOptions, aimPartSelected)
+	currentIndex = (currentIndex % #aimPartOptions) + 1
+	aimPartSelected = aimPartOptions[currentIndex]
+	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
+end)
+
 fovInput.FocusLost:Connect(function(enter)
 	if enter then
 		local num = tonumber(fovInput.Text:match("%d+"))
@@ -237,19 +368,6 @@ toggleFOVCircle.MouseButton1Click:Connect(function()
 	toggleFOVCircle.Text = "Show FOV Circle: " .. (showFOV and "ON" or "OFF")
 end)
 
-bindBtn.MouseButton1Click:Connect(function()
-	if waitingForBind then return end
-	waitingForBind = true
-	bindBtn.Text = "Press any key..."
-end)
-
-aimPartBtn.MouseButton1Click:Connect(function()
-	local currentIndex = table.find(aimPartOptions, aimPartSelected)
-	currentIndex = (currentIndex % #aimPartOptions) + 1
-	aimPartSelected = aimPartOptions[currentIndex]
-	aimPartLabel.Text = "Aim Part: " .. aimPartSelected
-end)
-
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 
@@ -266,56 +384,3 @@ UIS.InputBegan:Connect(function(input, gpe)
 		gui.Enabled = guiOpen
 	end
 end)
-
--- ESP
-local function createBoxForPlayer(p)
-	if boxes[p] then return end
-	local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-	if not root then return end
-	local box = Instance.new("BoxHandleAdornment")
-	box.Adornee = root
-	box.Size = Vector3.new(4, 6, 2)
-	box.AlwaysOnTop = true
-	box.ZIndex = 10
-	box.Transparency = 0.25
-	box.Color3 = Color3.fromRGB(255, 0, 0)
-	box.Parent = game.CoreGui
-	boxes[p] = box
-end
-
-local function removeBox(p)
-	if boxes[p] then
-		boxes[p]:Destroy()
-		boxes[p] = nil
-	end
-end
-
-local function espToggle(state)
-	espEnabled = state
-	if not espEnabled then
-		for p in pairs(boxes) do removeBox(p) end
-		return
-	end
-
-	for _, p in pairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and p.Team ~= LocalPlayer.Team then
-			createBoxForPlayer(p)
-		end
-	end
-end
-
-espBtn.MouseButton1Click:Connect(function()
-	espToggle(not espEnabled)
-	espBtn.Text = "ESP: " .. (espEnabled and "ON" or "OFF")
-end)
-
-Players.PlayerAdded:Connect(function(p)
-	p.CharacterAdded:Connect(function()
-		task.wait(0.5)
-		if espEnabled and p.Team ~= LocalPlayer.Team then
-			createBoxForPlayer(p)
-		end
-	end)
-end)
-
-Players.PlayerRemoving:Connect(removeBox)
